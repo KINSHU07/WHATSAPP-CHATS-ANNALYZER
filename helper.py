@@ -96,7 +96,6 @@ def emoji_helper(selected_user, df):
 
     emojis = []
     for message in df['message']:
-        # FIX: emoji.UNICODE_EMOJI is deprecated; use emoji.is_emoji() instead
         emojis.extend([c for c in message if emoji.is_emoji(c)])
 
     emoji_df = pd.DataFrame(Counter(emojis).most_common(len(Counter(emojis))))
@@ -141,3 +140,89 @@ def activity_heatmap(selected_user, df):
         index='day_name', columns='period',
         values='message', aggfunc='count'
     ).fillna(0)
+
+
+# ── NEW FEATURES ─────────────────────────────────────────────────────────────
+
+def hourly_message_distribution(selected_user, df):
+    """Messages count by hour of day (0-23)."""
+    if selected_user != 'Overall':
+        df = df[df['user'] == selected_user]
+    return df.groupby('hour').count()['message'].reset_index()
+
+
+def sentiment_over_time(selected_user, df):
+    """
+    Very lightweight sentiment proxy: counts positive words vs negative words
+    per month using simple keyword lists (no extra library needed).
+    Returns a dataframe with columns: time, positive, negative.
+    """
+    positive_words = {'good','great','happy','love','nice','awesome','fantastic',
+                      'wonderful','best','excellent','amazing','beautiful','fun',
+                      'enjoy','glad','thanks','thank','lol','haha','😊','❤','🥰',
+                      '😍','🎉','👍','😂','🙏'}
+    negative_words = {'bad','sad','hate','worst','terrible','awful','horrible',
+                      'boring','angry','upset','annoyed','stressed','cry','miss',
+                      'sorry','😢','😭','😠','😡','💔','😞','🙁','😔'}
+
+    if selected_user != 'Overall':
+        df = df[df['user'] == selected_user]
+
+    temp = df[df['user'] != 'group_notification'].copy()
+    temp['positive'] = temp['message'].apply(
+        lambda m: sum(1 for w in m.lower().split() if w in positive_words))
+    temp['negative'] = temp['message'].apply(
+        lambda m: sum(1 for w in m.lower().split() if w in negative_words))
+
+    result = temp.groupby(['year', 'month_num', 'month'])[['positive','negative']].sum().reset_index()
+    result['time'] = result['month'] + '-' + result['year'].astype(str)
+    return result
+
+
+def avg_message_length(selected_user, df):
+    """Average message length (words) per user."""
+    if selected_user != 'Overall':
+        df = df[df['user'] == selected_user]
+
+    temp = df[df['user'] != 'group_notification']
+    temp = temp[temp['message'] != '<Media omitted>\n'].copy()
+    temp['msg_len'] = temp['message'].apply(lambda m: len(m.split()))
+    return temp.groupby('user')['msg_len'].mean().sort_values(ascending=False).reset_index()
+
+
+def response_time_analysis(df):
+    """
+    Average response time (minutes) between consecutive messages per user.
+    Only considers gaps < 60 min to ignore overnight silences.
+    """
+    temp = df[df['user'] != 'group_notification'].copy()
+    temp = temp.sort_values('date').reset_index(drop=True)
+    temp['prev_time'] = temp['date'].shift(1)
+    temp['prev_user'] = temp['user'].shift(1)
+    temp['gap_min'] = (temp['date'] - temp['prev_time']).dt.total_seconds() / 60
+
+    # Only count when a DIFFERENT user replies within 60 minutes
+    replies = temp[(temp['user'] != temp['prev_user']) & (temp['gap_min'] < 60)]
+    return replies.groupby('user')['gap_min'].mean().sort_values().reset_index()
+
+
+def messages_by_period_of_day(selected_user, df):
+    """Categorise messages into Morning / Afternoon / Evening / Night."""
+    if selected_user != 'Overall':
+        df = df[df['user'] == selected_user]
+
+    def get_period(hour):
+        if 5 <= hour < 12:
+            return 'Morning'
+        elif 12 <= hour < 17:
+            return 'Afternoon'
+        elif 17 <= hour < 21:
+            return 'Evening'
+        else:
+            return 'Night'
+
+    temp = df[df['user'] != 'group_notification'].copy()
+    temp['time_of_day'] = temp['hour'].apply(get_period)
+    order = ['Morning', 'Afternoon', 'Evening', 'Night']
+    result = temp['time_of_day'].value_counts().reindex(order).fillna(0)
+    return result

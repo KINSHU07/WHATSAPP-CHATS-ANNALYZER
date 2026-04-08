@@ -2,47 +2,28 @@ import re
 import pandas as pd
 
 def preprocess(data):
-    # Supports both 12-hour (AM/PM) and 24-hour WhatsApp timestamp formats
-    pattern = r'\d{1,2}/\d{1,2}/\d{2,4},\s\d{1,2}:\d{2}(?:\s?[APap][Mm])?\s-\s'
+    # Format: M/D/YY, HH:MM AM/PM -  (e.g. 1/4/26, 11:24 AM - )
+    pattern = r'\d{1,2}/\d{1,2}/\d{2,4},\s\d{1,2}:\d{2}\s[APap][Mm]\s-\s'
 
     messages = re.split(pattern, data)[1:]
     dates = re.findall(pattern, data)
 
-    # Trim lists to equal length (safety guard)
     min_len = min(len(messages), len(dates))
     messages = messages[:min_len]
     dates = dates[:min_len]
 
     df = pd.DataFrame({'user_message': messages, 'message_date': dates})
 
-    # Try multiple date formats to handle different WhatsApp exports
-    parsed = None
-    for fmt in (
-        '%d/%m/%Y, %H:%M - ',
-        '%d/%m/%y, %H:%M - ',
-        '%m/%d/%Y, %H:%M - ',
-        '%m/%d/%y, %H:%M - ',
-        '%d/%m/%Y, %I:%M %p - ',
-        '%d/%m/%y, %I:%M %p - ',
-    ):
-        try:
-            parsed = pd.to_datetime(df['message_date'], format=fmt)
-            break
-        except (ValueError, TypeError):
-            continue
+    # Your format: 1/4/26, 11:24 AM - 
+    df['message_date'] = pd.to_datetime(df['message_date'], format='%m/%d/%y, %I:%M %p - ')
 
-    # Fallback: format='mixed' works in pandas 2.0+ (replaces removed infer_datetime_format)
-    if parsed is None:
-        parsed = pd.to_datetime(df['message_date'], format='mixed', errors='coerce')
-
-    df['message_date'] = parsed
     df.rename(columns={'message_date': 'date'}, inplace=True)
 
     users = []
     messages_list = []
     for message in df['user_message']:
         entry = re.split(r'([\w\W]+?):\s', message)
-        if entry[1:]:  # user name present
+        if entry[1:]:
             users.append(entry[1])
             messages_list.append(" ".join(entry[2:]))
         else:
